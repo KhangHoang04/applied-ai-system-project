@@ -31,6 +31,15 @@ Your final app should:
 
 <a href="uml_final.png" target="_blank"><img src='uml_final.png' title='PawPal+ UML Diagram' width='' alt='PawPal+ Class Diagram' /></a>
 
+## Classes
+
+| Class | Responsibility |
+|-------|---------------|
+| **Task** | Represents a single care activity. Holds title, duration, priority, category, scheduled time, frequency, due date, and completion status. Can mark itself complete and auto-generate the next recurring occurrence. |
+| **Pet** | Stores pet profile info (name, species, age, special needs) and owns a list of Tasks. Provides methods to add tasks and produce a summary. |
+| **Owner** | Manages multiple Pets and a daily time budget (`available_minutes`). Aggregates all tasks across pets. Supports JSON save/load for data persistence. |
+| **Scheduler** | The scheduling brain. Retrieves tasks from the Owner, sorts by time or priority, filters by pet/status/category, detects time conflicts, finds next available slots, and generates a time-budgeted daily plan with explanations. |
+
 ## Features
 
 - **Owner & Pet management** — Register multiple pets with name, species, age, and special needs
@@ -91,12 +100,40 @@ source .venv/bin/activate  # Windows: .venv\Scripts\activate
 pip install -r requirements.txt
 ```
 
-### Suggested workflow
+### Run the CLI demo
 
-1. Read the scenario carefully and identify requirements and edge cases.
-2. Draft a UML diagram (classes, attributes, methods, relationships).
-3. Convert UML into Python class stubs (no logic yet).
-4. Implement scheduling logic in small increments.
-5. Add tests to verify key behaviors.
-6. Connect your logic to the Streamlit UI in `app.py`.
-7. Refine UML so it matches what you actually built.
+```bash
+python main.py
+```
+
+This creates an Owner with two Pets (Mochi the dog, Whiskers the cat), adds 6 tasks with different times and priorities, then demonstrates sorting, conflict detection, schedule generation, next-slot finding, recurring task completion, and JSON persistence — all in the terminal.
+
+### Run the Streamlit app
+
+```bash
+streamlit run app.py
+```
+
+### Run the tests
+
+```bash
+python -m pytest tests/ -v
+```
+
+## Stretch Features
+
+### Advanced Algorithm: Next Available Slot (via Agent Mode)
+
+`Scheduler.find_next_slot(duration)` scans the daily timeline (06:00–22:00) and finds the earliest contiguous gap that fits a task of the given duration. **Agent Mode** was used to implement this: I described the desired behavior ("scan occupied intervals and find the first gap of N minutes"), and the AI produced a cursor-based gap-scanning algorithm that handles empty schedules, fully booked days, and gaps between tasks in a single pass.
+
+### Data Persistence (via Agent Mode)
+
+`Owner.save_to_json()` and `Owner.load_from_json()` persist all data to `data.json` between runs. **Agent Mode** orchestrated the multi-file changes: it added `to_dict()`/`from_dict()` serialization to all three dataclasses in `pawpal_system.py`, then updated `app.py` to auto-load on startup and provide Save/Load buttons.
+
+### Advanced Scheduling Logic
+
+The scheduler implements priority-based sorting combined with time-blocking: timed tasks are placed first (chronologically), then flexible tasks fill remaining budget by priority (high > medium > low). Conflict detection prevents overlapping time ranges. Both features are observable in the CLI demo (`main.py`) and the Streamlit UI (`app.py`).
+
+### Professional UI and Output
+
+Both the Streamlit app and CLI demo use emoji-coded priority indicators (🔴 HIGH / 🟡 MEDIUM / 🟢 LOW) and category icons (🚶 walk / 🍖 feed / 💊 medicine / ✂️ grooming / 🧸 enrichment). The CLI uses auto-width aligned ASCII tables for readable output without external dependencies.

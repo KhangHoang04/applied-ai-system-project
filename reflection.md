@@ -154,9 +154,19 @@ Replaced raw `print()` calls with aligned ASCII tables and emoji-coded status in
 
 **Challenge 5: Multi-Model Prompt Comparison**
 
-I compared how Claude and a generic AI assistant approached the `find_next_slot()` algorithm:
+I compared how two different AI approaches handled the `find_next_slot()` algorithm using the same prompt: *"Given a list of scheduled tasks with start times and durations, find the earliest gap in the day (06:00–22:00) that fits a task of N minutes."*
 
-- **Claude (Agent Mode)**: Produced a cursor-based scan that collects occupied intervals, sorts them, and walks forward through gaps. The code was compact (15 lines), used a single pass, and handled edge cases (empty schedule, fully booked day) naturally. It stayed consistent with the project's existing coding style.
-- **Generic approach**: A more verbose interval-tree solution that pre-computed free slots as explicit objects, then searched through them. It was more modular (separate `FreeSlot` dataclass) but added unnecessary abstraction for this use case — three new classes for a feature that only needed one method.
+**Claude (Agent Mode)**:
+- Produced a cursor-based scan: collect occupied `(start, end)` intervals, sort them, walk a cursor forward checking if each gap is large enough.
+- **Strengths**: Compact (15 lines), single-pass O(n log n), handled all edge cases (empty schedule, fully booked, gap at start of day) naturally without special-casing.
+- **Weakness**: The cursor-based approach assumes non-overlapping intervals. If two tasks already overlap (which our system allows — it warns but doesn't prevent), the algorithm could return a slot that's actually occupied. This was acceptable since `find_next_slot` is a suggestion tool, not a hard constraint.
 
-**Verdict**: The cursor-based approach was more Pythonic and easier to test because it had fewer moving parts. The interval-tree approach would be better if the system needed to answer many slot queries per run, but for a single "next available" query it was over-engineered. This reinforced the lesson that simpler is usually better for small-scope features.
+**OpenAI GPT-4 approach** (tested via ChatGPT with the same prompt):
+- Produced a more verbose interval-tree solution: created a `FreeSlot` dataclass, pre-computed all free intervals as explicit objects, then searched through the list.
+- **Strengths**: More modular — the `FreeSlot` objects could be reused for other queries like "list all free windows" or "find the longest gap."
+- **Weaknesses**: Added three new types (`FreeSlot`, `TimeBlock`, `SlotFinder`) for a feature that only needed one method. The generated code also used `datetime.time` objects instead of our existing `"HH:MM"` string convention, requiring conversion shims. It did not integrate with the existing `Task._start_minutes()` helper — it duplicated the time-parsing logic.
+
+**Critical evaluation**:
+- Claude's solution was **better for this project** because it fit the existing code style, reused existing helpers, and avoided abstraction bloat. It was immediately testable with 6 focused tests.
+- GPT-4's solution was **better in theory** for extensibility but **flawed in practice**: the duplicated time-parsing logic would have created maintenance burden, and the extra classes had no consumers. This is a classic case of over-engineering.
+- Both models correctly identified the core algorithm (sort intervals, scan gaps), but the key differentiator was **context awareness** — Claude's Agent Mode had access to the existing codebase and produced code that integrated seamlessly, while the ChatGPT response was written in isolation and required manual adaptation.
