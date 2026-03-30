@@ -1,7 +1,24 @@
 """PawPal+ system logic — core classes for pet care scheduling."""
 
+from __future__ import annotations
+
+import json
+import os
 from dataclasses import dataclass, field
 from datetime import date, timedelta
+from pathlib import Path
+
+DATA_FILE = Path("data.json")
+
+PRIORITY_EMOJI = {"high": "\U0001f534", "medium": "\U0001f7e1", "low": "\U0001f7e2"}
+CATEGORY_EMOJI = {
+    "walk": "\U0001f6b6",
+    "feed": "\U0001f356",
+    "medicine": "\U0001f48a",
+    "grooming": "\u2702\ufe0f",
+    "enrichment": "\U0001f9f8",
+    "other": "\U0001f4cb",
+}
 
 
 @dataclass
@@ -18,7 +35,7 @@ class Task:
     frequency: str = "once"         # "once", "daily", or "weekly"
     due_date: date | None = None
 
-    def mark_complete(self) -> "Task | None":
+    def mark_complete(self) -> Task | None:
         """Mark this task as completed. Returns a new Task for the next occurrence if recurring."""
         self.completed = True
         if self.frequency == "daily" and self.due_date:
@@ -63,6 +80,46 @@ class Task:
         h, m = self.scheduled_time.split(":")
         return int(h) * 60 + int(m)
 
+    def display_priority(self) -> str:
+        """Return priority with emoji prefix."""
+        emoji = PRIORITY_EMOJI.get(self.priority, "")
+        return f"{emoji} {self.priority.upper()}"
+
+    def display_category(self) -> str:
+        """Return category with emoji prefix."""
+        emoji = CATEGORY_EMOJI.get(self.category, CATEGORY_EMOJI["other"])
+        return f"{emoji} {self.category}"
+
+    def to_dict(self) -> dict:
+        """Serialize task to a plain dictionary for JSON storage."""
+        return {
+            "title": self.title,
+            "duration_minutes": self.duration_minutes,
+            "priority": self.priority,
+            "category": self.category,
+            "pet_name": self.pet_name,
+            "completed": self.completed,
+            "scheduled_time": self.scheduled_time,
+            "frequency": self.frequency,
+            "due_date": self.due_date.isoformat() if self.due_date else None,
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict) -> Task:
+        """Deserialize a task from a dictionary."""
+        due = data.get("due_date")
+        return cls(
+            title=data["title"],
+            duration_minutes=data["duration_minutes"],
+            priority=data.get("priority", "medium"),
+            category=data.get("category", "other"),
+            pet_name=data.get("pet_name", ""),
+            completed=data.get("completed", False),
+            scheduled_time=data.get("scheduled_time", ""),
+            frequency=data.get("frequency", "once"),
+            due_date=date.fromisoformat(due) if due else None,
+        )
+
 
 @dataclass
 class Pet:
@@ -83,6 +140,31 @@ class Pet:
         """Attach a care task to this pet."""
         task.pet_name = self.name
         self.tasks.append(task)
+
+    def to_dict(self) -> dict:
+        """Serialize pet to a plain dictionary for JSON storage."""
+        return {
+            "name": self.name,
+            "species": self.species,
+            "age": self.age,
+            "special_needs": self.special_needs,
+            "tasks": [t.to_dict() for t in self.tasks],
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict) -> Pet:
+        """Deserialize a pet from a dictionary."""
+        pet = cls(
+            name=data["name"],
+            species=data["species"],
+            age=data.get("age", 0),
+            special_needs=data.get("special_needs", []),
+        )
+        for td in data.get("tasks", []):
+            task = Task.from_dict(td)
+            task.pet_name = pet.name
+            pet.tasks.append(task)
+        return pet
 
 
 @dataclass
@@ -107,6 +189,41 @@ class Owner:
         for pet in self.pets:
             tasks.extend(pet.tasks)
         return tasks
+
+    # ---- JSON persistence --------------------------------------------------
+
+    def to_dict(self) -> dict:
+        """Serialize owner to a plain dictionary for JSON storage."""
+        return {
+            "name": self.name,
+            "available_minutes": self.available_minutes,
+            "pets": [p.to_dict() for p in self.pets],
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict) -> Owner:
+        """Deserialize an owner from a dictionary."""
+        owner = cls(
+            name=data["name"],
+            available_minutes=data.get("available_minutes", 120),
+        )
+        for pd in data.get("pets", []):
+            owner.pets.append(Pet.from_dict(pd))
+        return owner
+
+    def save_to_json(self, path: str | Path = DATA_FILE) -> None:
+        """Persist the owner, pets, and all tasks to a JSON file."""
+        with open(path, "w") as f:
+            json.dump(self.to_dict(), f, indent=2)
+
+    @classmethod
+    def load_from_json(cls, path: str | Path = DATA_FILE) -> Owner | None:
+        """Load an owner from a JSON file. Returns None if the file doesn't exist."""
+        p = Path(path)
+        if not p.exists():
+            return None
+        with open(p) as f:
+            return cls.from_dict(json.load(f))
 
 
 class Scheduler:
@@ -154,7 +271,6 @@ class Scheduler:
         next_task = task.mark_complete()
         if next_task is not None:
             self.tasks.append(next_task)
-            # Also add to the pet's task list
             for pet in self.owner.pets:
                 if pet.name == next_task.pet_name:
                     pet.tasks.append(next_task)
@@ -177,11 +293,50 @@ class Scheduler:
                 if a_start is not None and a_end is not None and b_start is not None:
                     if b_start < a_end:
                         warnings.append(
-                            f"Conflict: '{a.title}' ({a.pet_name} {a.scheduled_time}–"
+                            f"Conflict: '{a.title}' ({a.pet_name} {a.scheduled_time}\u2013"
                             f"{a_end // 60:02d}:{a_end % 60:02d}) overlaps with "
                             f"'{b.title}' ({b.pet_name} {b.scheduled_time})"
                         )
         return warnings
+
+    # ---- Next available slot (Challenge 1) ---------------------------------
+
+    def find_next_slot(self, duration: int, day_start: str = "06:00", day_end: str = "22:00") -> str | None:
+        """Find the earliest gap in the schedule that fits *duration* minutes.
+
+        Scans from *day_start* to *day_end*, skipping over already-occupied
+        time ranges.  Returns an "HH:MM" string for the start of the gap,
+        or None if no slot is available.
+        """
+        start_min = self._parse_time(day_start)
+        end_min = self._parse_time(day_end)
+
+        # Collect occupied intervals from pending timed tasks
+        occupied: list[tuple[int, int]] = []
+        for t in self.tasks:
+            if t.completed or not t.scheduled_time:
+                continue
+            ts = t._start_minutes()
+            te = t.end_time_minutes()
+            if ts is not None and te is not None:
+                occupied.append((ts, te))
+        occupied.sort()
+
+        cursor = start_min
+        for occ_start, occ_end in occupied:
+            if cursor + duration <= occ_start:
+                return f"{cursor // 60:02d}:{cursor % 60:02d}"
+            cursor = max(cursor, occ_end)
+
+        # Check the remaining window after all occupied slots
+        if cursor + duration <= end_min:
+            return f"{cursor // 60:02d}:{cursor % 60:02d}"
+        return None
+
+    @staticmethod
+    def _parse_time(hhmm: str) -> int:
+        h, m = hhmm.split(":")
+        return int(h) * 60 + int(m)
 
     # ---- Schedule generation -----------------------------------------------
 
@@ -229,7 +384,7 @@ class Scheduler:
             freq = f" [{task.frequency}]" if task.frequency != "once" else ""
             lines.append(
                 f"  {i}. [{task.priority.upper()}] {task.title} "
-                f"({task.pet_name}) — {task.duration_minutes} min "
+                f"({task.pet_name}) \u2014 {task.duration_minutes} min "
                 f"@ {time_str}{freq}"
             )
 

@@ -1,6 +1,10 @@
 """Tests for PawPal+ core logic — happy paths and edge cases."""
 
+import json
+import tempfile
 from datetime import date, timedelta
+from pathlib import Path
+
 from pawpal_system import Owner, Pet, Task, Scheduler
 
 
@@ -76,6 +80,18 @@ class TestPetOwner:
         dog.add_task(Task(title="Walk", duration_minutes=30))
         cat.add_task(Task(title="Feed", duration_minutes=10))
         assert len(owner.all_tasks()) == 2
+
+
+# --- Display helpers -------------------------------------------------------
+
+class TestDisplayHelpers:
+    def test_display_priority_includes_emoji(self):
+        t = Task(title="Walk", duration_minutes=30, priority="high")
+        assert "HIGH" in t.display_priority()
+
+    def test_display_category_includes_emoji(self):
+        t = Task(title="Walk", duration_minutes=30, category="walk")
+        assert "walk" in t.display_category()
 
 
 # --- Sorting ---------------------------------------------------------------
@@ -173,10 +189,7 @@ class TestFiltering:
 class TestRecurring:
     def test_daily_task_creates_next_occurrence(self):
         today = date.today()
-        task = Task(
-            title="Walk", duration_minutes=30,
-            frequency="daily", due_date=today,
-        )
+        task = Task(title="Walk", duration_minutes=30, frequency="daily", due_date=today)
         next_task = task.mark_complete()
         assert task.completed is True
         assert next_task is not None
@@ -185,10 +198,7 @@ class TestRecurring:
 
     def test_weekly_task_creates_next_occurrence(self):
         today = date.today()
-        task = Task(
-            title="Grooming", duration_minutes=60,
-            frequency="weekly", due_date=today,
-        )
+        task = Task(title="Grooming", duration_minutes=60, frequency="weekly", due_date=today)
         next_task = task.mark_complete()
         assert next_task is not None
         assert next_task.due_date == today + timedelta(weeks=1)
@@ -207,10 +217,7 @@ class TestRecurring:
         owner = Owner(name="Jo")
         pet = Pet(name="Rex", species="dog")
         owner.add_pet(pet)
-        task = Task(
-            title="Walk", duration_minutes=30,
-            frequency="daily", due_date=date.today(),
-        )
+        task = Task(title="Walk", duration_minutes=30, frequency="daily", due_date=date.today())
         pet.add_task(task)
 
         scheduler = Scheduler(owner)
@@ -312,6 +319,114 @@ class TestConflictDetection:
 
         warnings = Scheduler(owner).detect_conflicts()
         assert len(warnings) == 0
+
+
+# --- Next available slot (Challenge 1) -------------------------------------
+
+class TestFindNextSlot:
+    def test_finds_gap_before_first_task(self):
+        owner = Owner(name="Jo")
+        pet = Pet(name="Rex", species="dog")
+        owner.add_pet(pet)
+        pet.add_task(Task(title="Walk", duration_minutes=30, scheduled_time="08:00"))
+
+        slot = Scheduler(owner).find_next_slot(duration=15)
+        assert slot == "06:00"
+
+    def test_finds_gap_between_tasks(self):
+        owner = Owner(name="Jo")
+        pet = Pet(name="Rex", species="dog")
+        owner.add_pet(pet)
+        pet.add_task(Task(title="Walk", duration_minutes=30, scheduled_time="06:00"))
+        pet.add_task(Task(title="Feed", duration_minutes=30, scheduled_time="08:00"))
+
+        slot = Scheduler(owner).find_next_slot(duration=30)
+        assert slot == "06:30"
+
+    def test_finds_gap_after_last_task(self):
+        owner = Owner(name="Jo")
+        pet = Pet(name="Rex", species="dog")
+        owner.add_pet(pet)
+        pet.add_task(Task(title="Walk", duration_minutes=30, scheduled_time="06:00"))
+
+        slot = Scheduler(owner).find_next_slot(duration=60)
+        assert slot == "06:30"
+
+    def test_returns_none_when_day_full(self):
+        owner = Owner(name="Jo")
+        pet = Pet(name="Rex", species="dog")
+        owner.add_pet(pet)
+        # Fill 06:00–22:00 (960 min)
+        pet.add_task(Task(title="Block", duration_minutes=960, scheduled_time="06:00"))
+
+        slot = Scheduler(owner).find_next_slot(duration=15)
+        assert slot is None
+
+    def test_empty_schedule_returns_day_start(self):
+        owner = Owner(name="Jo")
+        pet = Pet(name="Rex", species="dog")
+        owner.add_pet(pet)
+
+        slot = Scheduler(owner).find_next_slot(duration=30)
+        assert slot == "06:00"
+
+    def test_ignores_completed_tasks(self):
+        owner = Owner(name="Jo")
+        pet = Pet(name="Rex", species="dog")
+        owner.add_pet(pet)
+        t = Task(title="Walk", duration_minutes=960, scheduled_time="06:00")
+        t.completed = True
+        pet.add_task(t)
+
+        slot = Scheduler(owner).find_next_slot(duration=30)
+        assert slot == "06:00"
+
+
+# --- JSON persistence (Challenge 2) ----------------------------------------
+
+class TestPersistence:
+    def test_task_round_trip(self):
+        task = Task(
+            title="Walk", duration_minutes=30, priority="high",
+            category="walk", pet_name="Rex", scheduled_time="07:00",
+            frequency="daily", due_date=date.today(),
+        )
+        restored = Task.from_dict(task.to_dict())
+        assert restored.title == task.title
+        assert restored.due_date == task.due_date
+        assert restored.frequency == task.frequency
+
+    def test_pet_round_trip(self):
+        pet = Pet(name="Rex", species="dog", age=5, special_needs=["meds"])
+        pet.add_task(Task(title="Walk", duration_minutes=30))
+        restored = Pet.from_dict(pet.to_dict())
+        assert restored.name == "Rex"
+        assert len(restored.tasks) == 1
+        assert restored.tasks[0].pet_name == "Rex"
+
+    def test_owner_save_and_load(self):
+        owner = Owner(name="Jo", available_minutes=90)
+        pet = Pet(name="Rex", species="dog")
+        owner.add_pet(pet)
+        pet.add_task(Task(title="Walk", duration_minutes=30, frequency="daily", due_date=date.today()))
+
+        with tempfile.NamedTemporaryFile(suffix=".json", delete=False) as f:
+            path = f.name
+
+        try:
+            owner.save_to_json(path)
+            loaded = Owner.load_from_json(path)
+            assert loaded is not None
+            assert loaded.name == "Jo"
+            assert loaded.available_minutes == 90
+            assert len(loaded.pets) == 1
+            assert len(loaded.pets[0].tasks) == 1
+            assert loaded.pets[0].tasks[0].due_date == date.today()
+        finally:
+            Path(path).unlink(missing_ok=True)
+
+    def test_load_nonexistent_returns_none(self):
+        assert Owner.load_from_json("/tmp/nonexistent_pawpal_test.json") is None
 
 
 # --- Schedule generation ---------------------------------------------------

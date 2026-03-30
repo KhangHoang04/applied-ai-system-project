@@ -1,21 +1,29 @@
-"""PawPal+ Streamlit UI — connected to the scheduling backend."""
+"""PawPal+ Streamlit UI — connected to the scheduling backend with persistence."""
 
 import streamlit as st
 from datetime import date
-from pawpal_system import Owner, Pet, Task, Scheduler
+from pawpal_system import (
+    Owner, Pet, Task, Scheduler,
+    PRIORITY_EMOJI, CATEGORY_EMOJI, DATA_FILE,
+)
 
-st.set_page_config(page_title="PawPal+", page_icon="🐾", layout="centered")
-st.title("🐾 PawPal+")
+st.set_page_config(page_title="PawPal+", page_icon="\U0001f43e", layout="centered")
+st.title("\U0001f43e PawPal+")
 st.caption("A smart pet care planning assistant")
 
-# ---- Session state init ----------------------------------------------------
+# ---- Session state init + JSON persistence ---------------------------------
 
-if "owner" not in st.session_state:
-    st.session_state.owner = None
 if "pets" not in st.session_state:
-    st.session_state.pets = []
-if "setup_done" not in st.session_state:
-    st.session_state.setup_done = False
+    loaded = Owner.load_from_json()
+    if loaded:
+        st.session_state.pets = loaded.pets
+        st.session_state.saved_owner_name = loaded.name
+        st.session_state.saved_minutes = loaded.available_minutes
+        st.toast("Loaded saved data from data.json")
+    else:
+        st.session_state.pets = []
+        st.session_state.saved_owner_name = "Jordan"
+        st.session_state.saved_minutes = 120
 
 # ---- Step 1: Owner + Pet setup --------------------------------------------
 
@@ -23,10 +31,11 @@ st.subheader("1. Owner & Pet Info")
 
 col_owner, col_time = st.columns(2)
 with col_owner:
-    owner_name = st.text_input("Owner name", value="Jordan")
+    owner_name = st.text_input("Owner name", value=st.session_state.saved_owner_name)
 with col_time:
     available_minutes = st.number_input(
-        "Available time today (min)", min_value=10, max_value=480, value=120
+        "Available time today (min)", min_value=10, max_value=480,
+        value=st.session_state.saved_minutes,
     )
 
 st.markdown("**Add a pet**")
@@ -44,10 +53,8 @@ special_needs_input = st.text_input(
 if st.button("Add pet"):
     needs = [s.strip() for s in special_needs_input.split(",") if s.strip()]
     new_pet = Pet(
-        name=pet_name_input,
-        species=species_input,
-        age=age_input,
-        special_needs=needs,
+        name=pet_name_input, species=species_input,
+        age=age_input, special_needs=needs,
     )
     st.session_state.pets.append(new_pet)
     st.success(f"Added {new_pet.summary()}")
@@ -64,7 +71,6 @@ st.divider()
 st.subheader("2. Care Tasks")
 st.caption("Add tasks for your pets. The scheduler will sort and plan them for you.")
 
-# Pick which pet this task belongs to
 pet_names = [p.name for p in st.session_state.pets]
 if not pet_names:
     st.info("Add at least one pet above before adding tasks.")
@@ -96,18 +102,14 @@ if st.button("Add task"):
     pet_obj = next(p for p in st.session_state.pets if p.name == task_pet)
     due = date.today() if frequency != "once" else None
     new_task = Task(
-        title=task_title,
-        duration_minutes=int(duration),
-        priority=priority,
-        category=category,
-        scheduled_time=scheduled_time,
-        frequency=frequency,
-        due_date=due,
+        title=task_title, duration_minutes=int(duration),
+        priority=priority, category=category,
+        scheduled_time=scheduled_time, frequency=frequency, due_date=due,
     )
     pet_obj.add_task(new_task)
     st.success(f"Added '{task_title}' for {task_pet}")
 
-# Show current task table
+# Show current task table with emojis
 all_tasks_data = []
 for p in st.session_state.pets:
     for t in p.tasks:
@@ -116,8 +118,8 @@ for p in st.session_state.pets:
             "Task": t.title,
             "Time": t.scheduled_time or "flex",
             "Duration": f"{t.duration_minutes} min",
-            "Priority": t.priority,
-            "Category": t.category,
+            "Priority": t.display_priority(),
+            "Category": t.display_category(),
             "Frequency": t.frequency,
         })
 
@@ -132,13 +134,10 @@ st.divider()
 
 st.subheader("3. Today's Schedule")
 
-# Build owner object for the scheduler
 owner = Owner(
-    name=owner_name,
-    pets=st.session_state.pets,
+    name=owner_name, pets=st.session_state.pets,
     available_minutes=int(available_minutes),
 )
-
 scheduler = Scheduler(owner)
 
 # Filter controls
@@ -157,22 +156,19 @@ if st.button("Generate schedule", type="primary"):
     conflicts = scheduler.detect_conflicts()
     if conflicts:
         for w in conflicts:
-            st.warning(f"⚠️ {w}")
+            st.warning(f"\u26a0\ufe0f {w}")
 
-    # Generate
     schedule = scheduler.generate_schedule()
 
     if not schedule:
         st.info("No tasks to schedule. Add some tasks above!")
     else:
-        # Apply display filters
         display = schedule
         if filter_pet != "All":
             display = [t for t in display if t.pet_name == filter_pet]
         if filter_cat != "All":
             display = [t for t in display if t.category == filter_cat]
 
-        # Schedule table
         schedule_data = []
         for i, t in enumerate(display, 1):
             time_str = t.scheduled_time if t.scheduled_time else "flex"
@@ -183,21 +179,26 @@ if st.button("Generate schedule", type="primary"):
                 "Task": f"{t.title}{freq_str}",
                 "Pet": t.pet_name,
                 "Duration": f"{t.duration_minutes} min",
-                "Priority": t.priority.upper(),
+                "Priority": t.display_priority(),
+                "Category": t.display_category(),
             })
         st.table(schedule_data)
 
-        # Explanation
         with st.expander("Why this order?"):
             st.text(scheduler.explain_plan(schedule))
 
-        # Stats
         total = sum(t.duration_minutes for t in schedule)
         remaining = int(available_minutes) - total
         st.success(
             f"Scheduled {len(schedule)} tasks using {total}/{int(available_minutes)} minutes. "
             f"{remaining} minutes remaining."
         )
+
+        # Suggest next available slot for remaining time
+        if remaining > 0:
+            slot = scheduler.find_next_slot(duration=15)
+            if slot:
+                st.info(f"\U0001f4a1 Next available 15-min slot: **{slot}**")
 
         # Skipped tasks
         all_pending = [t for t in scheduler.tasks if not t.completed]
@@ -207,3 +208,25 @@ if st.button("Generate schedule", type="primary"):
                 "Skipped (not enough time): "
                 + ", ".join(f"{t.title} ({t.pet_name})" for t in skipped)
             )
+
+st.divider()
+
+# ---- Step 4: Save data ----------------------------------------------------
+
+st.subheader("4. Save / Load")
+scol1, scol2 = st.columns(2)
+with scol1:
+    if st.button("Save to data.json"):
+        owner.save_to_json()
+        st.success("Saved!")
+with scol2:
+    if st.button("Load from data.json"):
+        loaded = Owner.load_from_json()
+        if loaded:
+            st.session_state.pets = loaded.pets
+            st.session_state.saved_owner_name = loaded.name
+            st.session_state.saved_minutes = loaded.available_minutes
+            st.success("Loaded!")
+            st.rerun()
+        else:
+            st.warning("No saved data found.")

@@ -41,6 +41,9 @@ Your final app should:
 - **Recurring tasks** — Daily/weekly tasks auto-generate the next occurrence when completed
 - **Conflict detection** — Warns when task time ranges overlap (including across pets)
 - **Plan explanation** — The scheduler explains why tasks are ordered the way they are and which were skipped
+- **Next available slot** — Finds the earliest gap in the day that fits a task of a given duration
+- **Data persistence** — Save/load owner, pets, and tasks to `data.json` between sessions
+- **Emoji-coded UI** — Priority levels (\U0001f534/\U0001f7e1/\U0001f7e2) and task categories (\U0001f6b6/\U0001f356/\U0001f48a/\u2702\ufe0f/\U0001f9f8) are color-coded in both the Streamlit app and CLI output
 
 ## Smarter Scheduling
 
@@ -61,7 +64,7 @@ Run the full test suite with:
 python -m pytest tests/ -v
 ```
 
-The suite includes **36 tests** covering:
+The suite includes **48 tests** covering:
 
 | Area | What's tested |
 |------|---------------|
@@ -72,8 +75,11 @@ The suite includes **36 tests** covering:
 | Recurring tasks | Daily/weekly recurrence, attribute preservation, one-time tasks |
 | Conflict detection | Overlapping ranges, back-to-back, cross-pet, completed-task exclusion |
 | Schedule generation | Time budget, priority ordering, timed-before-flex, edge cases |
+| Next available slot | Gap before/between/after tasks, fully booked day, empty schedule |
+| JSON persistence | Task/Pet/Owner round-trip, save-to-file and load-back, missing file |
+| Display helpers | Emoji priority and category formatting |
 
-**Confidence level: 4/5** — All tests pass; remaining gap is Streamlit integration and midnight-spanning tasks.
+**Confidence level: 4/5** — All 48 tests pass; remaining gap is Streamlit integration and midnight-spanning tasks.
 
 ## Getting started
 

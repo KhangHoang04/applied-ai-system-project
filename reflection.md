@@ -94,7 +94,7 @@ When the AI reviewed the skeleton, it suggested changing `Task.pet_name` (a stri
 
 **a. What you tested**
 
-The test suite (36 tests) covers these behaviors:
+The test suite (48 tests) covers these behaviors:
 
 - **Task completion** — `mark_complete()` changes status; completed tasks are excluded from schedules.
 - **Task addition** — Adding tasks increases a pet's count and auto-sets `pet_name`.
@@ -109,7 +109,7 @@ These tests are important because the scheduler is the core "brain" of the app �
 
 **b. Confidence**
 
-Confidence: **4/5 stars**. All 36 tests pass and cover the primary happy paths and edge cases. The remaining gap is integration testing with the Streamlit UI (ensuring session state round-trips work correctly) and stress testing with a large number of tasks. If I had more time, I would add tests for:
+Confidence: **4/5 stars**. All 48 tests pass and cover the primary happy paths and edge cases. The remaining gap is integration testing with the Streamlit UI (ensuring session state round-trips work correctly) and stress testing with a large number of tasks. If I had more time, I would add tests for:
 - A pet with zero tasks going through the scheduler
 - Tasks that span midnight (e.g., 23:45 + 30 min)
 - Very large task lists (100+ tasks) to verify performance
@@ -129,3 +129,34 @@ If I had another iteration, I would redesign the conflict detection to suggest *
 **c. Key takeaway**
 
 The most important lesson was that **AI is most effective when you give it a narrow, well-defined scope**. Broad prompts like "build me a scheduler" produced generic code, but specific prompts like "review this file for missing relationships" or "add edge case tests for conflict detection" produced targeted, high-quality output. As the lead architect, my job was to make the design decisions and break the work into focused chunks — the AI handled the implementation within those boundaries.
+
+---
+
+## 6. Stretch Challenges
+
+**Challenge 1: Next Available Slot (Advanced Algorithm)**
+
+Added `Scheduler.find_next_slot(duration)` which scans the daily timeline (06:00–22:00) and finds the earliest contiguous gap that can fit a task of the given duration. The algorithm collects occupied intervals from all timed pending tasks, sorts them, then walks a cursor forward through the day — checking if the gap before each occupied block is large enough. Agent Mode was used to implement the gap-scanning logic: I described the desired behavior ("scan occupied intervals and find the first gap of N minutes"), and the AI produced a clean cursor-based solution.
+
+**Challenge 2: Data Persistence**
+
+Added `save_to_json()` and `load_from_json()` to the Owner class, plus `to_dict()` / `from_dict()` methods on Task, Pet, and Owner. Data is saved to `data.json` using Python's built-in `json` module. The Streamlit app auto-loads saved data on startup and provides Save/Load buttons. The main serialization challenge was handling `date` objects — solved by converting to ISO format strings during serialization and parsing them back on load.
+
+**Challenge 3: Priority Scheduling UI**
+
+The Streamlit schedule table now shows emoji-coded priorities and categories:
+- Priority: \U0001f534 HIGH, \U0001f7e1 MEDIUM, \U0001f7e2 LOW
+- Category: \U0001f6b6 walk, \U0001f356 feed, \U0001f48a medicine, \u2702\ufe0f grooming, \U0001f9f8 enrichment
+
+**Challenge 4: Professional CLI Output**
+
+Replaced raw `print()` calls with aligned ASCII tables and emoji-coded status indicators. The `print_table()` helper auto-calculates column widths for clean alignment without external dependencies.
+
+**Challenge 5: Multi-Model Prompt Comparison**
+
+I compared how Claude and a generic AI assistant approached the `find_next_slot()` algorithm:
+
+- **Claude (Agent Mode)**: Produced a cursor-based scan that collects occupied intervals, sorts them, and walks forward through gaps. The code was compact (15 lines), used a single pass, and handled edge cases (empty schedule, fully booked day) naturally. It stayed consistent with the project's existing coding style.
+- **Generic approach**: A more verbose interval-tree solution that pre-computed free slots as explicit objects, then searched through them. It was more modular (separate `FreeSlot` dataclass) but added unnecessary abstraction for this use case — three new classes for a feature that only needed one method.
+
+**Verdict**: The cursor-based approach was more Pythonic and easier to test because it had fewer moving parts. The interval-tree approach would be better if the system needed to answer many slot queries per run, but for a single "next available" query it was over-engineered. This reinforced the lesson that simpler is usually better for small-scope features.
