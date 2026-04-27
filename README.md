@@ -2,7 +2,7 @@
 
 > **AI-Enhanced Pet Care Planning with Retrieval-Augmented Generation**
 
-[![Video Walkthrough](https://img.shields.io/badge/Video-Walkthrough-blue?logo=loom)](https://www.loom.com/share/YOUR-VIDEO-ID-HERE)
+[![Video Walkthrough](https://img.shields.io/badge/Video-Walkthrough-blue?logo=loom)](https://www.loom.com/share/ef1f694b81104512a515ed99e471ffdb)
 
 ---
 
@@ -698,7 +698,7 @@ python stretch_features_demo.py  # Shows side-by-side comparison
 
 ## 🎥 Video Walkthrough
 
-**Loom Video:** [Click here to watch](https://www.loom.com/share/YOUR-VIDEO-ID-HERE)
+**Loom Video:** [Click here to watch](https://www.loom.com/share/ef1f694b81104512a515ed99e471ffdb)
 
 ### Video Contents (5-7 minutes)
 
